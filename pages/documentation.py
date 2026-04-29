@@ -253,21 +253,23 @@ with tab_math:
     displaying the main trajectory.
     """)
 
-    # ── 2.8 Saddle path via backward integration ─────────────────────────────
-    st.subheader("2.8  Displaying the saddle path")
+    # ── 2.8 Where the Jacobian is actually used ────────────────────────────────
+    st.subheader("2.8  Where the Jacobian is used in the app")
     st.markdown(r"""
-    To **draw** the saddle path on the phase diagram (without bisection), the
-    app uses **backward integration**:
+    The Jacobian and its eigenvalues are computed **only inside the derivations
+    panel** (shown when you click *Show/Hide derivations* in the sidebar). They
+    are used there to display the numerical values of $J$, $\det J$, $\text{tr}(J)$,
+    and $\lambda_{1,2}$ for the current parameter set — purely for educational display.
 
-    1. Start just off the steady state along the stable eigenvector:
-       $(k_0, c_0) = (\tilde k - \varepsilon,\;\tilde c - \varepsilon \mu)$.
-    2. Negate the right-hand side — integrating the *reversed* system moves
-       *away* from the steady state along the stable manifold.
-    3. Stop when $k$ gets close to zero (left arm) or reaches $k_{\text{max}}$
-       (right arm).
+    The **phase diagram does not draw a saddle-path curve**. The blue trajectory
+    you see is the forward-integrated path from $(k(0), c(0))$ as set by the
+    sliders. When the bisection animation runs, the final saddle-path trajectory
+    is added to the bisection diagram (as a cyan trace) but it is produced by
+    `build_paths` with the bisected $c(0)$ — not by backward integration.
 
-    This traces the entire saddle path with high accuracy and no numerical
-    knife-edge issues.
+    > **Note:** the code contains a `compute_display_saddle()` function that
+    > implements backward integration and could draw the exact saddle path, but
+    > it is currently not called anywhere in the app.
     """)
 
 
@@ -408,36 +410,25 @@ def build_paths(c0_, k0_, alpha_, delta_, rho_, k_ss_, c_ss_):
     integrator chose its internal steps.
     """)
 
-    # ── 3.6 compute_display_saddle() ────────────────────────────────────────
-    st.subheader("3.6  `compute_display_saddle(alpha, rho, delta)` — backward integration")
-    st.code("""
-@st.cache_data
-def compute_display_saddle(alpha_, rho_, delta_):
-    # Compute stable-manifold slope at SS from eigenvalues
-    J21  = c_ss_ * alpha_ * (alpha_-1) * k_ss_**(alpha_-2)
-    lam1 = 0.5 * (rho_ - sqrt(rho_**2 - 4*J21))   # stable eigenvalue
-    mu   = rho_ - lam1                              # = lam2, slope of saddle path
-
-    def rhs_back(t, y):
-        f = rhs_(t, y)
-        return [-f[0], -f[1]]   # negate RHS → backward time
-
-    # Left arm: start at (k̃ - ε, c̃ - ε·μ) and integrate until k ≈ 0
-    sol_l = solve_ivp(rhs_back, (0, 5000), [k_ss_-eps, c_ss_-eps*mu], ...)
-
-    # Right arm: same trick in the other direction
-    sol_r = solve_ivp(rhs_back, (0, 5000), [k_ss_+eps, c_ss_+eps*mu], ...)
-
-    return concatenate(left_arm, [k_ss_], right_arm)
-""", language="python")
+    # ── 3.6 compute_display_saddle() — dead code note ─────────────────────────
+    st.subheader("3.6  `compute_display_saddle()` — defined but not called")
     st.markdown(r"""
-    **Why backward integration instead of bisection?**
-    - Bisection is a numerical approximation; backward integration *follows the
-      exact stable manifold* of the ODE.
-    - The stable manifold is attracting under *reversed* time, so the backward
-      integrator converges onto the saddle path rather than diverging away from it.
-    - Result: the drawn saddle path is accurate to ODE solver tolerance
-      ($\sim 10^{-9}$) everywhere, with no knife-edge sensitivity.
+    The file also contains a `compute_display_saddle(alpha, rho, delta)` function
+    that traces the exact saddle path via **backward integration**. It is
+    `@st.cache_data`-decorated and fully implemented, but **not called** anywhere
+    in the current app — the phase diagram does not display a saddle-path curve.
+
+    The approach it implements:
+    - Computes the stable-manifold slope $\mu = \lambda_2$ from the Jacobian eigenvalues.
+    - Starts just off the steady state at $(\tilde k \pm \varepsilon,\; \tilde c \pm \varepsilon\mu)$.
+    - Negates the ODE right-hand side so that integrating *forward* in pseudo-time
+      moves *backward* along the actual trajectory — making the stable manifold
+      attracting and easy to follow numerically.
+    - Concatenates the left arm ($k < \tilde k$) and right arm ($k > \tilde k$) into
+      a single saddle-path curve.
+
+    If you want to re-enable it, call it before `make_phase_fig` and pass the
+    result as an extra trace.
     """)
 
     # ── 3.7 Session state and widget sync ────────────────────────────────────
@@ -495,9 +486,9 @@ if "_c0_pending" in st.session_state:
     |---------|-------|--------|
     | ODE method | RK45 | Explicit Runge-Kutta 4(5); good for smooth ODEs |
     | `max_step` | 0.05 | Prevents the adaptive stepper from taking enormous steps near the SS where the RHS is near zero |
-    | `rtol` / `atol` (backward integration) | 1e-9 / 1e-11 | High accuracy for the display saddle path |
-    | Bisection iterations (visual) | ≤ 40 | Enough to demonstrate convergence visually; stops early |
-    | Bisection iterations (precision) | 200 | Exceeds double-precision limits; cached |
+    | Bisection iterations (visual) | ≤ 40 | Enough to demonstrate convergence visually; stops early on first converge |
+    | Bisection iterations (precision) | 200 | Exceeds double-precision limits; result is cached by `@st.cache_data` |
     | `EXPLODE` threshold | 3.5 × k̃ | Empirically safe — far enough above k̃ to catch runaway paths |
-    | `CLOSE_TOL` | 0.01 | 1 % of steady-state values; loose enough to stop quickly |
+    | `CLOSE_TOL` | 0.01 | 1 % of steady-state values; loose enough to stop `shoot()` quickly |
+    | `CONV_TOL` | 0.02 | 2 % — slightly looser threshold used by `build_paths()` to mark convergence time t* |
     """)
